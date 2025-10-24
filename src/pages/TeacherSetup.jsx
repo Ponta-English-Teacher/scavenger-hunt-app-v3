@@ -1,101 +1,150 @@
-import React, { useState, useEffect } from "react";
+// src/pages/TeacherSetup.jsx
+import { useState } from "react";
+import { Link } from "react-router-dom";
 
 export default function TeacherSetup() {
   const [classCode, setClassCode] = useState("HGU-1234");
   const [topic, setTopic] = useState("campus life");
-  const [count, setCount] = useState(10); // teacher decides how many to generate
-  const [creating, setCreating] = useState(false);
-  const [sessionInfo, setSessionInfo] = useState(null); // live info from KV
+  const [count, setCount] = useState(5);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [items, setItems] = useState([]);
 
-  // Create class + generate questions
-  async function handleCreate() {
-    setCreating(true);
+  async function handleGenerate(e) {
+    e.preventDefault();
+    setError("");
+    setItems([]);
+    setLoading(true);
+
     try {
-      const res = await fetch("/api/session", {
+      const res = await fetch("/api/generate-questions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "create",
           classCode,
           topic,
           level: "A2–B1",
-          grammarFocus: [],   // you can wire multi-select later
-          count,              // number of questions to generate
+          grammarFocus: ["Simple Past"],
+          count: Number(count) || 5,
         }),
       });
-      const data = await res.json();
-      if (!data?.ok) throw new Error(data?.error || "Create failed");
-      setSessionInfo(data.session);
-      alert(`Class ${classCode} is ready with ${count} question(s).`);
-    } catch (e) {
-      alert("Error: " + e.message);
+
+      // If the function fails or a rewrite caught the route, give a clear message.
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(
+          `API error ${res.status}${
+            text ? `: ${text.slice(0, 300)}` : ""
+          }`.trim()
+        );
+      }
+
+      // Safer JSON parse
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        const text = await res.text().catch(() => "");
+        throw new Error(
+          `Failed to parse JSON. Raw response: ${text.slice(0, 300)}`
+        );
+      }
+
+      if (!data?.ok) {
+        throw new Error(
+          data?.error || "The API responded without ok:true."
+        );
+      }
+
+      setItems(Array.isArray(data.items) ? data.items : []);
+    } catch (err) {
+      setError(err?.message || String(err));
     } finally {
-      setCreating(false);
+      setLoading(false);
     }
   }
 
-  // Poll session every 3s to keep counts live
-  useEffect(() => {
-    if (!classCode) return;
-    const t = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/session?code=${encodeURIComponent(classCode)}`);
-        const data = await res.json();
-        if (data?.ok) setSessionInfo(data.session);
-      } catch {}
-    }, 3000);
-    return () => clearInterval(t);
-  }, [classCode]);
-
-  const studentsJoined = sessionInfo?.roster?.length ?? 0;
-  const questionsGenerated = sessionInfo?.questions?.length ?? 0;
-  const showWrapWarning =
-    studentsJoined > 0 && questionsGenerated > 0 && studentsJoined > questionsGenerated;
-
   return (
-    <section style={{ padding: 20 }}>
-      <h2>Teacher Setup</h2>
-      <p>Create a class and share questions with students.</p>
-
-      <label>
-        Class Code&nbsp;
-        <input value={classCode} onChange={(e) => setClassCode(e.target.value)} />
-      </label>
-      <br />
-      <label>
-        Topic&nbsp;
-        <input value={topic} onChange={(e) => setTopic(e.target.value)} />
-      </label>
-      <br />
-      <label>
-        Questions to generate&nbsp;
-        <input
-          type="number"
-          min={1}
-          max={200}
-          value={count}
-          onChange={(e) => setCount(+e.target.value || 1)}
-        />
-      </label>
-      <br />
-      <button onClick={handleCreate} disabled={creating}>
-        {creating ? "Generating..." : "Create Class (generate & share)"}
-      </button>
-
-      <div style={{ marginTop: 16, padding: 12, border: "1px solid #ddd", borderRadius: 8 }}>
-        <div style={{ fontWeight: 600, marginBottom: 6 }}>Live Status (auto refresh)</div>
-        <div>👥 Students joined: <b>{studentsJoined}</b></div>
-        <div>📝 Questions generated: <b>{questionsGenerated || count}</b></div>
-        {showWrapWarning && (
-          <div style={{ color: "#b00", marginTop: 6 }}>
-            Note: More students than questions — IDs will wrap (some students share a question).
-          </div>
-        )}
-      </div>
-
-      <p style={{ marginTop: 8 }}>
-        After creating, tell students the code <strong>{classCode}</strong>.
+    <div style={{ padding: "2rem", maxWidth: 900 }}>
+      <h1>Scavenger Hunt v3</h1>
+      <p>
+        <Link to="/teacher">Teacher</Link> ·{" "}
+        <Link to="/student">Student</Link> ·{" "}
+        <Link to="/lab">Question Lab</Link>
       </p>
-    </section>
+
+      <h2>Teacher Setup</h2>
+
+      <form onSubmit={handleGenerate} style={{ marginTop: "1rem" }}>
+        <div style={{ marginBottom: 8 }}>
+          <label>
+            Class Code{" "}
+            <input
+              value={classCode}
+              onChange={(e) => setClassCode(e.target.value)}
+              style={{ width: 200 }}
+            />
+          </label>
+        </div>
+
+        <div style={{ marginBottom: 8 }}>
+          <label>
+            Topic{" "}
+            <input
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              style={{ width: 240 }}
+            />
+          </label>
+        </div>
+
+        <div style={{ marginBottom: 8 }}>
+          <label>
+            Questions to generate{" "}
+            <input
+              type="number"
+              value={count}
+              min={1}
+              max={25}
+              onChange={(e) => setCount(e.target.value)}
+              style={{ width: 80 }}
+            />
+          </label>
+        </div>
+
+        <button disabled={loading} type="submit">
+          {loading ? "Generating…" : "Generate"}
+        </button>
+      </form>
+
+      {/* Status / errors */}
+      {error && (
+        <p style={{ color: "crimson", marginTop: 16 }}>
+          ❌ {error}
+        </p>
+      )}
+
+      {/* Show results */}
+      {items.length > 0 && (
+        <div style={{ marginTop: 20 }}>
+          <h3>Generated Questions</h3>
+          <ol>
+            {items.map((q, i) => (
+              <li key={i} style={{ marginBottom: 8 }}>
+                <div><strong>Q:</strong> {q.text}</div>
+                {q.followUp && (
+                  <div><em>Follow-up:</em> {q.followUp}</div>
+                )}
+                {q.grammarTag && (
+                  <div style={{ opacity: 0.7 }}>
+                    <small>Tag: {q.grammarTag}</small>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </div>
   );
 }
