@@ -1,7 +1,7 @@
 // src/pages/TeacherSetup.jsx
 import React, { useEffect, useState } from "react";
 
-const API_BASE = "http://localhost:3000";
+const API_BASE = ""; // same-origin (works on localhost and Vercel)
 
 export default function TeacherSetup() {
   const [topic, setTopic] = useState("");
