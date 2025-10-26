@@ -1,148 +1,184 @@
 // src/pages/TeacherSetup.jsx
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import React, { useEffect, useState } from "react";
+
+const API_BASE = "http://localhost:3000";
 
 export default function TeacherSetup() {
-  const [classCode, setClassCode] = useState("HGU-1234");
-  const [topic, setTopic] = useState("campus life");
-  const [count, setCount] = useState(5);
+  const [topic, setTopic] = useState("");
+  const [numStudents, setNumStudents] = useState("");
+  const [numQuestions, setNumQuestions] = useState("");
+  const [classId, setClassId] = useState(
+    localStorage.getItem("sh_v3_classId") || ""
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [items, setItems] = useState([]);
+  const [session, setSession] = useState(null);
 
-  async function handleGenerate(e) {
+  // --- Create session ---
+  async function handleCreateSession(e) {
     e.preventDefault();
-    setError("");
-    setItems([]);
     setLoading(true);
-
+    setError("");
     try {
-      const res = await fetch("/api/generate-questions", {
+      const res = await fetch(`${API_BASE}/api/session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          classCode,
           topic,
-          level: "A2–B1",
-          grammarFocus: ["Simple Past"],
-          count: Number(count) || 5,
+          numStudents: Number(numStudents),
+          numQuestions: Number(numQuestions),
         }),
       });
 
-      // If the function fails or a rewrite caught the route, give a clear message.
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(
-          `API error ${res.status}${
-            text ? `: ${text.slice(0, 300)}` : ""
-          }`.trim()
-        );
-      }
+      if (!res.ok) throw new Error("Failed to create session");
+      const data = await res.json();
+      if (!data?.classId) throw new Error("No classId in response");
 
-      // Safer JSON parse
-      let data;
-      try {
-        data = await res.json();
-      } catch {
-        const text = await res.text().catch(() => "");
-        throw new Error(
-          `Failed to parse JSON. Raw response: ${text.slice(0, 300)}`
-        );
-      }
-
-      if (!data?.ok) {
-        throw new Error(
-          data?.error || "The API responded without ok:true."
-        );
-      }
-
-      setItems(Array.isArray(data.items) ? data.items : []);
+      setClassId(data.classId);
+      localStorage.setItem("sh_v3_classId", data.classId);
+      setSession(data.session);
     } catch (err) {
-      setError(err?.message || String(err));
+      setError(err.message || String(err));
     } finally {
       setLoading(false);
     }
   }
 
-  return (
-    <div style={{ padding: "2rem", maxWidth: 900 }}>
-      <h1>Scavenger Hunt v3</h1>
-      <p>
-        <Link to="/teacher">Teacher</Link> ·{" "}
-        <Link to="/student">Student</Link> ·{" "}
-        <Link to="/lab">Question Lab</Link>
-      </p>
+  // --- Load session from KV if classId exists ---
+  useEffect(() => {
+    async function loadSession() {
+      if (!classId) return;
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/session?classId=${encodeURIComponent(classId)}`
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        setSession(data.session);
+        setTopic(data.session?.topic || "");
+        setNumStudents(data.session?.classSize || "");
+        setNumQuestions(data.session?.count || "");
+      } catch (err) {
+        console.error("Session load error:", err);
+      }
+    }
+    loadSession();
+  }, [classId]);
 
+  // --- Start a new class ---
+  function handleNewClass() {
+    localStorage.removeItem("sh_v3_classId");
+    setClassId("");
+    setSession(null);
+    setTopic("");
+    setNumStudents("");
+    setNumQuestions("");
+    setError("");
+  }
+
+  return (
+    <div style={{ padding: 20, fontFamily: "sans-serif" }}>
       <h2>Teacher Setup</h2>
 
-      <form onSubmit={handleGenerate} style={{ marginTop: "1rem" }}>
-        <div style={{ marginBottom: 8 }}>
+      {!session && (
+        <form
+          onSubmit={handleCreateSession}
+          style={{ display: "grid", gap: 10, maxWidth: 360 }}
+        >
           <label>
-            Class Code{" "}
+            Topic:
             <input
-              value={classCode}
-              onChange={(e) => setClassCode(e.target.value)}
-              style={{ width: 200 }}
-            />
-          </label>
-        </div>
-
-        <div style={{ marginBottom: 8 }}>
-          <label>
-            Topic{" "}
-            <input
+              type="text"
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
-              style={{ width: 240 }}
+              required
+              style={{ width: "100%", padding: 6 }}
             />
           </label>
-        </div>
 
-        <div style={{ marginBottom: 8 }}>
           <label>
-            Questions to generate{" "}
+            Number of Students:
             <input
               type="number"
-              value={count}
-              min={1}
-              max={25}
-              onChange={(e) => setCount(e.target.value)}
-              style={{ width: 80 }}
+              value={numStudents}
+              onChange={(e) => setNumStudents(e.target.value)}
+              required
+              style={{ width: "100%", padding: 6 }}
             />
           </label>
-        </div>
 
-        <button disabled={loading} type="submit">
-          {loading ? "Generating…" : "Generate"}
-        </button>
-      </form>
+          <label>
+            Number of Questions:
+            <input
+              type="number"
+              value={numQuestions}
+              onChange={(e) => setNumQuestions(e.target.value)}
+              required
+              style={{ width: "100%", padding: 6 }}
+            />
+          </label>
 
-      {/* Status / errors */}
-      {error && (
-        <p style={{ color: "crimson", marginTop: 16 }}>
-          ❌ {error}
-        </p>
+          <button type="submit" disabled={loading}>
+            {loading ? "Creating..." : "Create Session"}
+          </button>
+
+          {error && <p style={{ color: "red" }}>Error: {error}</p>}
+        </form>
       )}
 
-      {/* Show results */}
-      {items.length > 0 && (
+      {classId && (
         <div style={{ marginTop: 20 }}>
-          <h3>Generated Questions</h3>
-          <ol>
-            {items.map((q, i) => (
-              <li key={i} style={{ marginBottom: 8 }}>
-                <div><strong>Q:</strong> {q.text}</div>
-                {q.followUp && (
-                  <div><em>Follow-up:</em> {q.followUp}</div>
-                )}
-                {q.grammarTag && (
-                  <div style={{ opacity: 0.7 }}>
-                    <small>Tag: {q.grammarTag}</small>
-                  </div>
-                )}
-              </li>
-            ))}
-          </ol>
+          <strong>Class ID:</strong> <code>{classId}</code>
+          <br />
+          <a
+            href={`/lab?classId=${encodeURIComponent(classId)}`}
+            style={{ textDecoration: "underline" }}
+          >
+            Go to Question Lab →
+          </a>
+
+          {session?.questions?.length > 0 && (
+            <div
+              style={{
+                marginTop: 20,
+                padding: 10,
+                border: "1px solid #ccc",
+                borderRadius: 6,
+                background: "#fafafa",
+              }}
+            >
+              <h3>Saved Questions</h3>
+              <ol>
+                {session.questions.map((q, i) => (
+                  <li key={i}>
+                    <strong>Q:</strong> {q.text}
+                    {q.hint && (
+                      <>
+                        <br />
+                        <em>Hint:</em> {q.hint}
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          <button
+            onClick={handleNewClass}
+            style={{
+              marginTop: 20,
+              padding: "8px 16px",
+              fontWeight: "bold",
+              background: "#f44336",
+              color: "white",
+              border: "none",
+              borderRadius: 6,
+              cursor: "pointer",
+            }}
+          >
+            🆕 Start New Class
+          </button>
         </div>
       )}
     </div>
