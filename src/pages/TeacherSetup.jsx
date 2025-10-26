@@ -80,6 +80,7 @@ export default function TeacherSetup() {
     <div style={{ padding: 20, fontFamily: "sans-serif" }}>
       <h2>Teacher Setup</h2>
 
+      {/* Create Session Form */}
       {!session && (
         <form
           onSubmit={handleCreateSession}
@@ -126,6 +127,7 @@ export default function TeacherSetup() {
         </form>
       )}
 
+      {/* Active Session Info */}
       {classId && (
         <div style={{ marginTop: 20 }}>
           <strong>Class ID:</strong> <code>{classId}</code>
@@ -137,6 +139,49 @@ export default function TeacherSetup() {
             Go to Question Lab →
           </a>
 
+          {/* Student Join Link */}
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>Student Join Link</div>
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                flexWrap: "wrap",
+              }}
+            >
+              <code
+                style={{
+                  background: "#f2f2f2",
+                  padding: "6px 8px",
+                  borderRadius: 6,
+                }}
+              >
+                {`${window.location.origin}/student?classId=${encodeURIComponent(
+                  classId
+                )}`}
+              </code>
+              <button
+                type="button"
+                onClick={async () => {
+                  const url = `${window.location.origin}/student?classId=${encodeURIComponent(
+                    classId
+                  )}`;
+                  try {
+                    await navigator.clipboard.writeText(url);
+                    alert("Join link copied!");
+                  } catch {
+                    alert("Copy failed. Long-press or select the link to copy.");
+                  }
+                }}
+                style={{ padding: "6px 10px" }}
+              >
+                Copy Join Link
+              </button>
+            </div>
+          </div>
+
+          {/* Saved Questions */}
           {session?.questions?.length > 0 && (
             <div
               style={{
@@ -164,6 +209,7 @@ export default function TeacherSetup() {
             </div>
           )}
 
+          {/* Start New Class Button */}
           <button
             onClick={handleNewClass}
             style={{
