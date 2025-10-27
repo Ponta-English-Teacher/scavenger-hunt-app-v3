@@ -29,44 +29,61 @@ export default function StudentPlay() {
   const [studentId, setStudentId] = useState(
     studentIdFromUrl || localStorage.getItem("sh_v3_studentId") || ""
   );
-  const [error, setError] = useState("");
   const [session, setSession] = useState(null);
   const [myQuestion, setMyQuestion] = useState(null);
 
-  // Persist params if present
+  // Persist params if present in URL
   useEffect(() => {
     if (classIdFromUrl) localStorage.setItem("sh_v3_classId", classIdFromUrl);
     if (studentIdFromUrl) localStorage.setItem("sh_v3_studentId", studentIdFromUrl);
   }, [classIdFromUrl, studentIdFromUrl]);
 
-  // Load session
+  // Persist whenever user edits fields (no Join button needed)
   useEffect(() => {
+    if (classId !== undefined) localStorage.setItem("sh_v3_classId", String(classId).trim());
+  }, [classId]);
+  useEffect(() => {
+    if (studentId !== undefined) localStorage.setItem("sh_v3_studentId", String(studentId).trim());
+  }, [studentId]);
+
+  // Load session whenever classId changes
+  useEffect(() => {
+    let cancelled = false;
     async function load() {
+      setMyQuestion(null);
+      if (!classId) {
+        setSession(null);
+        return;
+      }
       try {
-        setError("");
-        setMyQuestion(null);
-        if (!classId) return;
         const res = await fetch(
           `${API_BASE}/api/session?classId=${encodeURIComponent(classId)}`
         );
-     if (!res.ok) {
-  const txt = await res.text();
-  throw new Error(`HTTP ${res.status} – ${txt}`);
-}
-const data = await res.json();
-console.log("Loaded session:", data);
-if (!data?.session) throw new Error("No session");
-setSession(data.session);
+        if (!res.ok) {
+          // Suppress error display for students; just clear session
+          console.warn("Session fetch failed:", res.status, await res.text());
+          if (!cancelled) setSession(null);
+          return;
+        }
+        const data = await res.json();
+        if (!cancelled) setSession(data?.session || null);
       } catch (e) {
-        setError(e?.message || String(e));
+        console.warn("Session fetch error:", e);
+        if (!cancelled) setSession(null);
       }
     }
     load();
+    return () => {
+      cancelled = true;
+    };
   }, [classId]);
 
   // Assign question once we have session + studentId
   useEffect(() => {
-    if (!session) return;
+    if (!session) {
+      setMyQuestion(null);
+      return;
+    }
     const questions = Array.isArray(session.questions) ? session.questions : [];
     const classSize = Number(session.classSize || 0);
     if (!questions.length) {
@@ -78,25 +95,12 @@ setSession(data.session);
     setMyQuestion(questions[qIdx]);
   }, [session, studentId]);
 
-  function handleJoin(e) {
-    e.preventDefault();
-    localStorage.setItem("sh_v3_classId", classId.trim());
-    localStorage.setItem("sh_v3_studentId", String(studentId).trim());
-    // Recompute assignment after saving
-    if (session) {
-      const questions = Array.isArray(session.questions) ? session.questions : [];
-      const classSize = Number(session.classSize || 0);
-      const idxBase = parseStudentIndex(studentId || "1", classSize) - 1;
-      const qIdx = questions.length ? ((idxBase % questions.length) + questions.length) % questions.length : 0;
-      setMyQuestion(questions[qIdx] || null);
-    }
-  }
-
   return (
     <div style={{ padding: 20, fontFamily: "sans-serif", maxWidth: 720 }}>
       <h2>Student</h2>
 
-      <form onSubmit={handleJoin} style={{ display: "grid", gap: 10, maxWidth: 420 }}>
+      {/* Inputs only (auto-save & auto-assign) */}
+      <div style={{ display: "grid", gap: 10, maxWidth: 420 }}>
         <label>
           Class ID:
           <input
@@ -120,29 +124,27 @@ setSession(data.session);
             style={{ width: "100%", padding: 6 }}
           />
         </label>
+      </div>
 
-        <button type="submit">Join</button>
-      </form>
-
-      {error && <p style={{ color: "crimson", marginTop: 10 }}>Error: {error}</p>}
-
-      {/* Session info */}
+      {/* Session info — show ONLY Topic for students */}
       {session && (
         <div style={{ marginTop: 18 }}>
-          <div>
-            <strong>Class ID:</strong> <code>{session.classId}</code>
-            {"  "}•{"  "}
-            <strong>Topic:</strong> <code>{session.topic}</code>
-            {"  "}•{"  "}
-            <strong>Questions:</strong> {Array.isArray(session.questions) ? session.questions.length : 0}
-          </div>
+          {session.topic ? (
+            <div>
+              <strong>Topic:</strong> <code>{session.topic}</code>
+            </div>
+          ) : null}
         </div>
       )}
 
       {/* Assigned question */}
       <div style={{ marginTop: 18 }}>
         <h3>Your Question</h3>
-        {!myQuestion && <p style={{ opacity: 0.7 }}>Enter Class ID and Student ID, then press Join.</p>}
+        {!myQuestion && (
+          <p style={{ opacity: 0.7 }}>
+            Enter <em>Class ID</em> and <em>Student ID</em> above.
+          </p>
+        )}
         {myQuestion && (
           <div
             style={{
@@ -163,12 +165,6 @@ setSession(data.session);
           </div>
         )}
       </div>
-
-      {/* Note about seat mapping */}
-      <p style={{ marginTop: 16, fontSize: 13, opacity: 0.7 }}>
-        Mapping rule: S1→Q1, S2→Q2, … S6→Q6, S7→Q1 (wrap). This keeps neighbors on different questions
-        when class size ≤ number of questions.
-      </p>
     </div>
   );
 }
