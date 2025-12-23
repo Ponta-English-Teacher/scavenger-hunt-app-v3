@@ -72,7 +72,8 @@ export default async function handler(req) {
     if (method === "GET") {
       const classId = url.searchParams.get("classId");
       if (!classId) return json({ ok: false, error: "Missing classId" }, 400);
-
+    
+    const sessionKey = `session:${classId}`;
     const session = await kv.get(sessionKey);
     if (!session) return json({ ok: false, error: "Not found" }, 404);
 
