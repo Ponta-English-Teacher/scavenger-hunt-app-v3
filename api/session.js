@@ -85,12 +85,9 @@ export default async function handler(req) {
       const classId = url.searchParams.get("classId");
       if (!classId) return json({ ok: false, error: "Missing classId" }, 400);
 
-      const sessionKey = `session:${classId}`;
-      const get = await kvFetch(`/get/${encodeURIComponent(sessionKey)}`);
-      if (!get?.result) return json({ ok: false, error: "Not found" }, 404);
-
-      const session =
-        typeof get.result === "string" ? JSON.parse(get.result) : get.result;
+    const sessionKey = `session:${classId}`;
+    const session = await kv.get(sessionKey);
+    if (!session) return json({ ok: false, error: "Not found" }, 404);
 
       // Merge allowed fields from body (e.g., questions)
       const body = await req.json().catch(() => ({}));
