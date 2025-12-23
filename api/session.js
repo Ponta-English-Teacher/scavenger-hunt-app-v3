@@ -1,3 +1,4 @@
+import { kv } from "@vercel/kv";
 export const config = { runtime: "edge" };
 
 // Support BOTH naming schemes to avoid env mismatch:
