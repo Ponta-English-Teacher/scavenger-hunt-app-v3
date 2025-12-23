@@ -100,10 +100,7 @@ export default async function handler(req) {
         session.studentsJoined = (session.studentsJoined || 0) + 1;
       }
 
-      await kvFetch(`/set/${encodeURIComponent(sessionKey)}`, {
-        method: "POST",
-        body: JSON.stringify(session),
-      });
+      await kv.set(sessionKey, session);
 
       return json({ ok: true, session });
     }
