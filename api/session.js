@@ -1,16 +1,6 @@
 import { kv } from "@vercel/kv";
+
 export const config = { runtime: "edge" };
-
-// Support BOTH naming schemes to avoid env mismatch:
-// - Vercel KV-style:   KV_REST_API_URL / KV_REST_API_TOKEN
-// - Upstash-style:    UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN
-const KV_URL =
-  process.env.KV_REST_API_URL ||
-  process.env.UPSTASH_REDIS_REST_URL;
-
-const KV_TOKEN =
-  process.env.KV_REST_API_TOKEN ||
-  process.env.UPSTASH_REDIS_REST_TOKEN;
 
 const code = () =>
   Math.random().toString(36).slice(2, 6).toUpperCase() +
@@ -27,25 +17,15 @@ export default async function handler(req) {
   }
 
   try {
-    // Quick, explicit env check (prevents mysterious 500s)
-    if (!KV_URL || !KV_TOKEN) {
-      return json(
-        {
-          ok: false,
-          error:
-            "Missing env vars. Set KV_REST_API_URL/KV_REST_API_TOKEN (or UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN) in Vercel and redeploy.",
-        },
-        500
-      );
-    }
-
     const url = new URL(req.url);
     const method = req.method;
 
+    // --------------------
+    // POST: create session
+    // --------------------
     if (method === "POST") {
       const body = await req.json().catch(() => ({}));
 
-      // Allow both old and new frontend field names
       const topic = String(body.topic || "general");
       const classSize = Number(body.classSize || body.numStudents || 0);
       const count = Number(body.count || body.numQuestions || 5);
@@ -63,39 +43,52 @@ export default async function handler(req) {
         questions: [],
       };
 
-    await kv.set(sessionKey, session);
-
+      await kv.set(sessionKey, session);
 
       return json({ ok: true, classId, session });
     }
 
+    // --------------------
+    // GET: load session
+    // --------------------
     if (method === "GET") {
       const classId = url.searchParams.get("classId");
-      if (!classId) return json({ ok: false, error: "Missing classId" }, 400);
-    
-    const sessionKey = `session:${classId}`;
-    const session = await kv.get(sessionKey);
-    if (!session) return json({ ok: false, error: "Not found" }, 404);
+      if (!classId) {
+        return json({ ok: false, error: "Missing classId" }, 400);
+      }
 
+      const sessionKey = `session:${classId}`;
+      const session = await kv.get(sessionKey);
+
+      if (!session) {
+        return json({ ok: false, error: "Not found" }, 404);
+      }
 
       return json({ ok: true, session });
     }
 
+    // --------------------
+    // PUT: update session
+    // --------------------
     if (method === "PUT") {
       const classId = url.searchParams.get("classId");
-      if (!classId) return json({ ok: false, error: "Missing classId" }, 400);
+      if (!classId) {
+        return json({ ok: false, error: "Missing classId" }, 400);
+      }
 
-    const sessionKey = `session:${classId}`;
-    const session = await kv.get(sessionKey);
-    if (!session) return json({ ok: false, error: "Not found" }, 404);
+      const sessionKey = `session:${classId}`;
+      const session = await kv.get(sessionKey);
 
-      // Merge allowed fields from body (e.g., questions)
+      if (!session) {
+        return json({ ok: false, error: "Not found" }, 404);
+      }
+
       const body = await req.json().catch(() => ({}));
+
       if (Array.isArray(body.questions)) {
         session.questions = body.questions;
       }
 
-      // Keep old behavior if you still want to track joins
       if (body.incrementJoined) {
         session.studentsJoined = (session.studentsJoined || 0) + 1;
       }
@@ -107,10 +100,7 @@ export default async function handler(req) {
 
     return json({ ok: false, error: "Method not allowed" }, 405);
   } catch (e) {
-    return json(
-      { ok: false, error: String(e?.message || e) },
-      500
-    );
+    return json({ ok: false, error: String(e.message || e) }, 500);
   }
 }
 
