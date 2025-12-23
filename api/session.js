@@ -1,47 +1,86 @@
 export const config = { runtime: "edge" };
 
-const KV_URL   = process.env.KV_REST_API_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN;
+// Support BOTH naming schemes to avoid env mismatch:
+// - Vercel KV-style:   KV_REST_API_URL / KV_REST_API_TOKEN
+// - Upstash-style:    UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN
+const KV_URL =
+  process.env.KV_REST_API_URL ||
+  process.env.UPSTASH_REDIS_REST_URL;
+
+const KV_TOKEN =
+  process.env.KV_REST_API_TOKEN ||
+  process.env.UPSTASH_REDIS_REST_TOKEN;
 
 async function kvFetch(path, init) {
+  if (!KV_URL || !KV_TOKEN) {
+    throw new Error(
+      "Missing KV env vars. Set KV_REST_API_URL/KV_REST_API_TOKEN (or UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN)."
+    );
+  }
+
   const res = await fetch(`${KV_URL}${path}`, {
     ...init,
     headers: {
-      "Authorization": `Bearer ${KV_TOKEN}`,
+      Authorization: `Bearer ${KV_TOKEN}`,
       "Content-Type": "application/json",
       ...(init?.headers || {}),
     },
   });
-  return res.json();
+
+  // Read as text first (Upstash/Vercel KV sometimes returns non-JSON errors)
+  const text = await res.text();
+
+  // If KV returns an error code, surface it clearly
+  if (!res.ok) {
+    throw new Error(`KV request failed: ${res.status} ${text.slice(0, 300)}`);
+  }
+
+  // Try JSON; if not JSON, return raw
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { ok: true, raw: text };
+  }
 }
 
 const code = () =>
-  Math.random().toString(36).slice(2, 6).toUpperCase() + "-" +
+  Math.random().toString(36).slice(2, 6).toUpperCase() +
+  "-" +
   Math.random().toString(36).slice(2, 6).toUpperCase();
 
 export default async function handler(req) {
+  // CORS preflight
   if (req.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-      },
+      headers: corsHeaders(),
     });
   }
+
   try {
+    // Quick, explicit env check (prevents mysterious 500s)
+    if (!KV_URL || !KV_TOKEN) {
+      return json(
+        {
+          ok: false,
+          error:
+            "Missing env vars. Set KV_REST_API_URL/KV_REST_API_TOKEN (or UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN) in Vercel and redeploy.",
+        },
+        500
+      );
+    }
+
     const url = new URL(req.url);
     const method = req.method;
 
-   if (method === "POST") {
-  const body = await req.json().catch(() => ({}));
+    if (method === "POST") {
+      const body = await req.json().catch(() => ({}));
 
-  // Allow both old and new frontend field names
-  const topic = String(body.topic || "general");
-  const classSize = Number(body.classSize || body.numStudents || 0);
-  const count = Number(body.count || body.numQuestions || 5);
-  
+      // Allow both old and new frontend field names
+      const topic = String(body.topic || "general");
+      const classSize = Number(body.classSize || body.numStudents || 0);
+      const count = Number(body.count || body.numQuestions || 5);
+
       const classId = code();
       const sessionKey = `session:${classId}`;
 
@@ -69,54 +108,67 @@ export default async function handler(req) {
 
       const sessionKey = `session:${classId}`;
       const data = await kvFetch(`/get/${encodeURIComponent(sessionKey)}`);
+
+      // Upstash/Vercel KV get usually returns { result: "..." }
       if (!data || !data.result) return json({ ok: false, error: "Not found" }, 404);
 
-      const session = JSON.parse(data.result);
+      const session =
+        typeof data.result === "string" ? JSON.parse(data.result) : data.result;
+
       return json({ ok: true, session });
     }
 
-   if (method === "PUT") {
-  const classId = url.searchParams.get("classId");
-  if (!classId) return json({ ok: false, error: "Missing classId" }, 400);
+    if (method === "PUT") {
+      const classId = url.searchParams.get("classId");
+      if (!classId) return json({ ok: false, error: "Missing classId" }, 400);
 
-  const sessionKey = `session:${classId}`;
-  const get = await kvFetch(`/get/${encodeURIComponent(sessionKey)}`);
-  if (!get?.result) return json({ ok: false, error: "Not found" }, 404);
+      const sessionKey = `session:${classId}`;
+      const get = await kvFetch(`/get/${encodeURIComponent(sessionKey)}`);
+      if (!get?.result) return json({ ok: false, error: "Not found" }, 404);
 
-  const session = JSON.parse(get.result);
+      const session =
+        typeof get.result === "string" ? JSON.parse(get.result) : get.result;
 
-  // NEW: merge allowed fields from body (e.g., questions)
-  const body = await req.json().catch(() => ({}));
-  if (Array.isArray(body.questions)) {
-    session.questions = body.questions;
-  }
+      // Merge allowed fields from body (e.g., questions)
+      const body = await req.json().catch(() => ({}));
+      if (Array.isArray(body.questions)) {
+        session.questions = body.questions;
+      }
 
-  // keep old behavior if you still want to track joins
-  if (body.incrementJoined) {
-    session.studentsJoined = (session.studentsJoined || 0) + 1;
-  }
+      // Keep old behavior if you still want to track joins
+      if (body.incrementJoined) {
+        session.studentsJoined = (session.studentsJoined || 0) + 1;
+      }
 
-  await kvFetch(`/set/${encodeURIComponent(sessionKey)}`, {
-    method: "POST",
-    body: JSON.stringify(session),
-  });
+      await kvFetch(`/set/${encodeURIComponent(sessionKey)}`, {
+        method: "POST",
+        body: JSON.stringify(session),
+      });
 
-  return json({ ok: true, session });
-}
+      return json({ ok: true, session });
+    }
+
     return json({ ok: false, error: "Method not allowed" }, 405);
   } catch (e) {
-    return json({ ok: false, error: String(e?.message || e) }, 500);
+    return json(
+      { ok: false, error: String(e?.message || e) },
+      500
+    );
   }
+}
+
+function corsHeaders() {
+  return {
+    "content-type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  };
 }
 
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: {
-      "content-type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    },
+    headers: corsHeaders(),
   });
 }
