@@ -12,38 +12,6 @@ const KV_TOKEN =
   process.env.KV_REST_API_TOKEN ||
   process.env.UPSTASH_REDIS_REST_TOKEN;
 
-async function kvFetch(path, init) {
-  if (!KV_URL || !KV_TOKEN) {
-    throw new Error(
-      "Missing KV env vars. Set KV_REST_API_URL/KV_REST_API_TOKEN (or UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN)."
-    );
-  }
-
-  const res = await fetch(`${KV_URL}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${KV_TOKEN}`,
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-  });
-
-  // Read as text first (Upstash/Vercel KV sometimes returns non-JSON errors)
-  const text = await res.text();
-
-  // If KV returns an error code, surface it clearly
-  if (!res.ok) {
-    throw new Error(`KV request failed: ${res.status} ${text.slice(0, 300)}`);
-  }
-
-  // Try JSON; if not JSON, return raw
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { ok: true, raw: text };
-  }
-}
-
 const code = () =>
   Math.random().toString(36).slice(2, 6).toUpperCase() +
   "-" +
