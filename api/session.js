@@ -63,10 +63,8 @@ export default async function handler(req) {
         questions: [],
       };
 
-      await kvFetch(`/set/${encodeURIComponent(sessionKey)}`, {
-        method: "POST",
-        body: JSON.stringify(session),
-      });
+    await kv.set(sessionKey, session);
+
 
       return json({ ok: true, classId, session });
     }
@@ -75,14 +73,9 @@ export default async function handler(req) {
       const classId = url.searchParams.get("classId");
       if (!classId) return json({ ok: false, error: "Missing classId" }, 400);
 
-      const sessionKey = `session:${classId}`;
-      const data = await kvFetch(`/get/${encodeURIComponent(sessionKey)}`);
+    const session = await kv.get(sessionKey);
+    if (!session) return json({ ok: false, error: "Not found" }, 404);
 
-      // Upstash/Vercel KV get usually returns { result: "..." }
-      if (!data || !data.result) return json({ ok: false, error: "Not found" }, 404);
-
-      const session =
-        typeof data.result === "string" ? JSON.parse(data.result) : data.result;
 
       return json({ ok: true, session });
     }
