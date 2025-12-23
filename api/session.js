@@ -1,58 +1,17 @@
+import { Redis } from "@upstash/redis";
+
 export const config = { runtime: "edge" };
 
-const KV_URL = process.env.KV_REST_API_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN;
+// Works with either naming scheme you already use
+const REDIS_URL =
+  process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+const REDIS_TOKEN =
+  process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 
-function validateKV() {
-  if (!KV_URL || !KV_TOKEN) {
-    return "Missing KV_REST_API_URL or KV_REST_API_TOKEN";
-  }
-  if (!/^https?:\/\//i.test(KV_URL)) {
-    return `KV_REST_API_URL must start with https:// (current: ${String(KV_URL).slice(0, 40)}...)`;
-  }
-  return null;
-}
-
-async function kvRequest(path) {
-  const bad = validateKV();
-  if (bad) throw new Error(bad);
-
-  const full = `${KV_URL}${path}`;
-
-  let res;
-  try {
-    res = await fetch(full, {
-      headers: { Authorization: `Bearer ${KV_TOKEN}` },
-    });
-  } catch (e) {
-    // fetch failed before any outgoing request (invalid URL etc.)
-    throw new Error(`fetch() failed for ${full}: ${String(e?.message || e)}`);
-  }
-
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`KV ${res.status} from ${path}: ${text.slice(0, 300)}`);
-  }
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error(`KV returned non-JSON for ${path}: ${text.slice(0, 120)}`);
-  }
-}
-
-async function kvGet(key) {
-  const data = await kvRequest(`/get/${encodeURIComponent(key)}`);
-  return data?.result ?? null;
-}
-
-// NOTE: /set/<key>/<value> is required by many Upstash REST endpoints.
-// If your KV expects POST body instead, the error message will tell us.
-async function kvSet(key, valueString) {
-  return kvRequest(
-    `/set/${encodeURIComponent(key)}/${encodeURIComponent(valueString)}`
-  );
-}
+const redis = new Redis({
+  url: REDIS_URL,
+  token: REDIS_TOKEN,
+});
 
 const code = () =>
   Math.random().toString(36).slice(2, 6).toUpperCase() +
@@ -65,14 +24,24 @@ export default async function handler(req) {
   }
 
   try {
+    if (!REDIS_URL || !REDIS_TOKEN) {
+      return json(
+        {
+          ok: false,
+          error:
+            "Missing KV_REST_API_URL/KV_REST_API_TOKEN (or UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN).",
+        },
+        500
+      );
+    }
+
     const url = new URL(req.url);
     const method = req.method;
 
+    // POST: create session
     if (method === "POST") {
-      const bad = validateKV();
-      if (bad) return json({ ok: false, error: bad }, 500);
-
       const body = await req.json().catch(() => ({}));
+
       const topic = String(body.topic || "general");
       const classSize = Number(body.classSize || body.numStudents || 0);
       const count = Number(body.count || body.numQuestions || 5);
@@ -90,48 +59,51 @@ export default async function handler(req) {
         questions: [],
       };
 
-      await kvSet(sessionKey, JSON.stringify(session));
+      // Store as JSON string (safe + predictable)
+      await redis.set(sessionKey, JSON.stringify(session));
+
       return json({ ok: true, classId, session });
     }
 
+    // GET: load session
     if (method === "GET") {
       const classId = url.searchParams.get("classId");
       if (!classId) return json({ ok: false, error: "Missing classId" }, 400);
 
-      const bad = validateKV();
-      if (bad) return json({ ok: false, error: bad }, 500);
-
       const sessionKey = `session:${classId}`;
-      const raw = await kvGet(sessionKey);
+      const raw = await redis.get(sessionKey);
+
       if (!raw) return json({ ok: false, error: "Not found" }, 404);
 
-      return json({ ok: true, session: JSON.parse(raw) });
+      const session = typeof raw === "string" ? JSON.parse(raw) : raw;
+      return json({ ok: true, session });
     }
 
+    // PUT: update session
     if (method === "PUT") {
       const classId = url.searchParams.get("classId");
       if (!classId) return json({ ok: false, error: "Missing classId" }, 400);
 
-      const bad = validateKV();
-      if (bad) return json({ ok: false, error: bad }, 500);
-
       const sessionKey = `session:${classId}`;
-      const raw = await kvGet(sessionKey);
+      const raw = await redis.get(sessionKey);
+
       if (!raw) return json({ ok: false, error: "Not found" }, 404);
 
-      const session = JSON.parse(raw);
+      const session = typeof raw === "string" ? JSON.parse(raw) : raw;
 
       const body = await req.json().catch(() => ({}));
       if (Array.isArray(body.questions)) session.questions = body.questions;
-      if (body.incrementJoined) session.studentsJoined = (session.studentsJoined || 0) + 1;
+      if (body.incrementJoined) {
+        session.studentsJoined = (session.studentsJoined || 0) + 1;
+      }
 
-      await kvSet(sessionKey, JSON.stringify(session));
+      await redis.set(sessionKey, JSON.stringify(session));
+
       return json({ ok: true, session });
     }
 
     return json({ ok: false, error: "Method not allowed" }, 405);
   } catch (e) {
-    // IMPORTANT: this will appear in Vercel Logs “Messages”
     console.error("api/session error:", e);
     return json({ ok: false, error: String(e?.message || e) }, 500);
   }
